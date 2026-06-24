@@ -1,0 +1,20 @@
+name: venera_core
+description: A starting point for Dart libraries or applications.
+version: 1.0.0
+repository: https://github.com/venera-app/venera_core
+
+environment:
+  sdk: ^3.12.2
+
+# Add regular dependencies here.
+dependencies:
+  crypto: ^3.0.6
+  dart_qjs: ^1.0.2
+  enough_convert: ^1.6.0
+  html: ^0.15.5
+  pointycastle: ^4.0.0
+  uuid: ^4.5.1
+
+dev_dependencies:
+  lints: ^6.0.0
+  test: ^1.25.6
