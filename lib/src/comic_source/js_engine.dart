@@ -127,9 +127,17 @@ class JsEngine with _JSEngineApi {
       case 'compute':
         return _compute(map);
       case 'UI':
+        return _ui(map);
       case 'setClipboard':
+        final handler = _uiHandlerOrException(map);
+        if (handler is Exception) return handler;
+        return (handler as ComicSourceUiHandler).setClipboard(
+          map['text']?.toString() ?? '',
+        );
       case 'getClipboard':
-      // TODO
+        final handler = _uiHandlerOrException(map);
+        if (handler is Exception) return handler;
+        return (handler as ComicSourceUiHandler).getClipboard();
       default:
         return _missingMessageHandler(map);
     }
@@ -139,6 +147,92 @@ class JsEngine with _JSEngineApi {
     return Exception(
       'No JavaScript message handler provided for method: ${message['method']}',
     );
+  }
+
+  dynamic _ui(Map<String, dynamic> message) {
+    final handler = _uiHandlerOrException(message);
+    if (handler is Exception) return handler;
+    if (handler is! ComicSourceUiHandler) {
+      return _missingMessageHandler(message);
+    }
+
+    switch (message['function']) {
+      case 'showMessage':
+        final content = message['message']?.toString() ?? '';
+        if (content.isEmpty) return null;
+        return handler.showMessage(content);
+      case 'showDialog':
+        return handler.showDialog(
+          title: message['title']?.toString(),
+          content: message['content']?.toString(),
+          actions: _dialogActions(message['actions']),
+        );
+      case 'launchUrl':
+        final url = message['url']?.toString() ?? '';
+        if (url.isEmpty) return null;
+        return handler.launchUrl(url);
+      case 'showLoading':
+        final onCancel = message['onCancel'];
+        if (onCancel != null && onCancel is! JSInvokable) return null;
+        return handler.showLoading(
+          onCancel: onCancel == null ? null : JSAutoFreeFunction(onCancel),
+        );
+      case 'cancelLoading':
+        final id = message['id'];
+        if (id is! int) return null;
+        return handler.cancelLoading(id);
+      case 'showInputDialog':
+        final title = message['title'];
+        final validator = message['validator'];
+        if (title is! String) return null;
+        if (validator != null && validator is! JSInvokable) return null;
+        return handler.showInputDialog(
+          title: title,
+          validator: validator == null ? null : JSAutoFreeFunction(validator),
+          image: message['image'],
+        );
+      case 'showSelectDialog':
+        final title = message['title'];
+        final options = message['options'];
+        final initialIndex = message['initialIndex'];
+        if (title is! String) return null;
+        if (options is! List) return null;
+        if (initialIndex != null && initialIndex is! int) return null;
+        return handler.showSelectDialog(
+          title: title,
+          options: options.whereType<String>().toList(),
+          initialIndex: initialIndex,
+        );
+      default:
+        return Exception(
+          'No JavaScript UI handler provided for function: '
+          '${message['function']}',
+        );
+    }
+  }
+
+  Object? _uiHandlerOrException(Map<String, dynamic> message) {
+    return _Config.uiHandler ??
+        Exception(
+          'No JavaScript UI handler provided for method: ${message['method']}',
+        );
+  }
+
+  List<ComicSourceDialogAction> _dialogActions(dynamic value) {
+    if (value is! List) return const [];
+    return value
+        .whereType<Map>()
+        .map((action) {
+          final callback = action['callback'];
+          if (callback is! JSInvokable) return null;
+          return ComicSourceDialogAction(
+            text: action['text']?.toString() ?? '',
+            style: action['style']?.toString() ?? 'text',
+            callback: JSAutoFreeFunction(callback),
+          );
+        })
+        .whereType<ComicSourceDialogAction>()
+        .toList();
   }
 
   Future<Map<String, dynamic>> _http(Map<String, dynamic> req) async {

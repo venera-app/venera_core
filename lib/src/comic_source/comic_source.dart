@@ -44,6 +44,7 @@ part 'models/search.dart';
 
 part 'types.dart';
 part 'config.dart';
+part 'ui.dart';
 part 'init_js.dart';
 
 class ComicSourceManager with ChangeNotifier {
@@ -70,6 +71,7 @@ class ComicSourceManager with ChangeNotifier {
     String? userAgent,
     Dio? dio,
     VoidCallback? dataChangedHandler,
+    ComicSourceUiHandler? uiHandler,
   }) async {
     _Config.update(
       dataPath: dataPath,
@@ -78,6 +80,7 @@ class ComicSourceManager with ChangeNotifier {
       userAgent: userAgent,
       dio: dio,
       dataChangedHandler: dataChangedHandler,
+      uiHandler: uiHandler,
     );
     await JsEngine().init();
     final path = FilePath.join(_Config.dataPath, "comic_source");

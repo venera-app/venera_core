@@ -9,6 +9,7 @@ class _Config {
       '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
   static Dio dio = Dio();
   static VoidCallback? dataChangedHandler;
+  static ComicSourceUiHandler? uiHandler;
 
   static void update({
     String? dataPath,
@@ -17,6 +18,7 @@ class _Config {
     String? userAgent,
     Dio? dio,
     VoidCallback? dataChangedHandler,
+    ComicSourceUiHandler? uiHandler,
   }) {
     if (dataPath != null) {
       _Config.dataPath = dataPath;
@@ -35,6 +37,9 @@ class _Config {
     }
     if (dataChangedHandler != null) {
       _Config.dataChangedHandler = dataChangedHandler;
+    }
+    if (uiHandler != null) {
+      _Config.uiHandler = uiHandler;
     }
   }
 }

@@ -36,6 +36,57 @@ void main() {
   });
 
   group('ComicSourceParser', () {
+    test('surfaces Exception for UI messages when no handler is injected', () {
+      final result = JsEngine().runCode('UI.showLoading()');
+
+      expect(result.toString(), contains('No JavaScript UI handler provided'));
+    });
+
+    test('delegates UI and clipboard messages to injected handler', () async {
+      final handler = _TestUiHandler();
+      await ComicSourceManager().init(uiHandler: handler);
+
+      await _resolveJs(JsEngine().runCode("UI.showMessage('hello')"));
+      await _resolveJs(
+        JsEngine().runCode(
+          "UI.showDialog('Title', 'Content', "
+          "[{ text: 'OK', style: 'filled', callback: () => 'done' }])",
+        ),
+      );
+      await _resolveJs(
+        JsEngine().runCode("UI.launchUrl('https://test.local')"),
+      );
+      final loadingId = JsEngine().runCode('UI.showLoading(() => {})');
+      await _resolveJs(JsEngine().runCode('UI.cancelLoading($loadingId)'));
+      final input = await _resolveJs(
+        JsEngine().runCode("UI.showInputDialog('Input', null, [1, 2, 3])"),
+      );
+      final selected = await _resolveJs(
+        JsEngine().runCode("UI.showSelectDialog('Select', ['A', 'B'], 1)"),
+      );
+      await _resolveJs(JsEngine().runCode("setClipboard('copied')"));
+      final clipboard = await _resolveJs(JsEngine().runCode('getClipboard()'));
+
+      expect(handler.messages, ['hello']);
+      expect(handler.dialogTitle, 'Title');
+      expect(handler.dialogContent, 'Content');
+      expect(handler.dialogActions.single.text, 'OK');
+      expect(handler.dialogActions.single.style, 'filled');
+      expect(handler.dialogActions.single.callback.call([]), 'done');
+      expect(handler.launchedUrl, 'https://test.local');
+      expect(loadingId, 0);
+      expect(handler.cancelledLoadingIds, [0]);
+      expect(handler.inputTitle, 'Input');
+      expect(handler.inputImage, [1, 2, 3]);
+      expect(input, 'typed');
+      expect(handler.selectTitle, 'Select');
+      expect(handler.selectOptions, ['A', 'B']);
+      expect(handler.selectInitialIndex, 1);
+      expect(selected, 1);
+      expect(handler.clipboard, 'copied');
+      expect(clipboard, 'copied');
+    });
+
     test('uses injected Dio for Network requests', () async {
       RequestOptions? capturedOptions;
       final dio = Dio()
@@ -521,4 +572,90 @@ $body
 String _classNameForKey(String key) {
   final sanitized = key.replaceAll(RegExp(r'[^a-zA-Z0-9_]'), '_');
   return 'Source${sanitized.hashCode.abs()}';
+}
+
+Future<dynamic> _resolveJs(dynamic value) {
+  if (value is Future) return value;
+  return Future.value(value);
+}
+
+class _TestUiHandler implements ComicSourceUiHandler {
+  final messages = <String>[];
+  final dialogActions = <ComicSourceDialogAction>[];
+  final cancelledLoadingIds = <int>[];
+
+  String? dialogTitle;
+  String? dialogContent;
+  String? launchedUrl;
+  String? inputTitle;
+  dynamic inputImage;
+  String? selectTitle;
+  List<String>? selectOptions;
+  int? selectInitialIndex;
+  String? clipboard;
+  int _nextLoadingId = 0;
+
+  @override
+  void showMessage(String message) {
+    messages.add(message);
+  }
+
+  @override
+  void showDialog({
+    String? title,
+    String? content,
+    required List<ComicSourceDialogAction> actions,
+  }) {
+    dialogTitle = title;
+    dialogContent = content;
+    dialogActions.addAll(actions);
+  }
+
+  @override
+  void launchUrl(String url) {
+    launchedUrl = url;
+  }
+
+  @override
+  int showLoading({JSAutoFreeFunction? onCancel}) {
+    return _nextLoadingId++;
+  }
+
+  @override
+  void cancelLoading(int id) {
+    cancelledLoadingIds.add(id);
+  }
+
+  @override
+  String? showInputDialog({
+    required String title,
+    JSAutoFreeFunction? validator,
+    dynamic image,
+  }) {
+    inputTitle = title;
+    inputImage = image;
+    return 'typed';
+  }
+
+  @override
+  int? showSelectDialog({
+    required String title,
+    required List<String> options,
+    int? initialIndex,
+  }) {
+    selectTitle = title;
+    selectOptions = options;
+    selectInitialIndex = initialIndex;
+    return initialIndex;
+  }
+
+  @override
+  void setClipboard(String text) {
+    clipboard = text;
+  }
+
+  @override
+  String? getClipboard() {
+    return clipboard;
+  }
 }
