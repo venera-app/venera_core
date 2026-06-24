@@ -1,5 +1,7 @@
+import 'dart:convert';
 import 'dart:io';
 
+import 'package:dio/dio.dart';
 import 'package:test/test.dart';
 import 'package:venera_core/venera_core.dart';
 
@@ -34,6 +36,71 @@ void main() {
   });
 
   group('ComicSourceParser', () {
+    test('uses injected Dio for Network requests', () async {
+      RequestOptions? capturedOptions;
+      final dio = Dio()
+        ..interceptors.add(
+          InterceptorsWrapper(
+            onRequest: (options, handler) {
+              capturedOptions = options;
+              handler.resolve(
+                Response<List<int>>(
+                  requestOptions: options,
+                  data: utf8.encode('dio-body'),
+                  statusCode: 202,
+                  headers: Headers.fromMap({
+                    'x-test': ['yes'],
+                  }),
+                ),
+              );
+            },
+          ),
+        );
+
+      await ComicSourceManager().init(dio: dio, userAgent: 'dio-agent');
+
+      final source = await ComicSourceParser().parse(
+        _sourceScript(
+          key: 'dio_source',
+          body: '''
+            comic = {
+              loadInfo: async () => {
+                const result = await Network.post(
+                  'https://example.test/api',
+                  {'x-custom': '1'},
+                  [1, 2, 3],
+                  {'trace': 'abc'}
+                );
+                return {
+                  title: result.body + ':' + result.status + ':' + result.headers['x-test'],
+                  cover: 'cover',
+                  tags: {},
+                };
+              },
+              loadEp: () => ({ images: [] }),
+            }
+          ''',
+        ),
+        'dio_source.js',
+      );
+
+      final result = await source.loadComicInfo!('id');
+
+      expect(result.error, isFalse);
+      expect(result.data.title, 'dio-body:202:yes');
+      expect(capturedOptions!.method, 'POST');
+      expect(capturedOptions!.uri.toString(), 'https://example.test/api');
+      expect(capturedOptions!.headers['x-custom'], '1');
+      expect(
+        capturedOptions!.headers[HttpHeaders.userAgentHeader],
+        'dio-agent',
+      );
+      expect(capturedOptions!.data, [1, 2, 3]);
+      expect(capturedOptions!.extra['trace'], 'abc');
+
+      await ComicSourceManager().init(dio: Dio());
+    });
+
     test('rejects invalid source content', () async {
       await expectLater(
         ComicSourceParser().parse('const source = {}', 'invalid.js'),

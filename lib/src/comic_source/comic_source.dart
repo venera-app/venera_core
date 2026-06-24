@@ -9,6 +9,7 @@ import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 import 'package:dart_qjs/dart_qjs.dart';
+import 'package:dio/dio.dart';
 import 'package:enough_convert/enough_convert.dart';
 import 'package:html/dom.dart' as dom;
 import 'package:html/parser.dart' as html;
@@ -67,6 +68,7 @@ class ComicSourceManager with ChangeNotifier {
     String? appVersion,
     String? locale,
     String? userAgent,
+    Dio? dio,
     VoidCallback? dataChangedHandler,
   }) async {
     _Config.update(
@@ -74,6 +76,7 @@ class ComicSourceManager with ChangeNotifier {
       appVersion: appVersion,
       locale: locale,
       userAgent: userAgent,
+      dio: dio,
       dataChangedHandler: dataChangedHandler,
     );
     await JsEngine().init();

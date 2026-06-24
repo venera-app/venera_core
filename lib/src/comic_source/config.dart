@@ -7,6 +7,7 @@ class _Config {
   static String userAgent =
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
       '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+  static Dio dio = Dio();
   static VoidCallback? dataChangedHandler;
 
   static void update({
@@ -14,6 +15,7 @@ class _Config {
     String? appVersion,
     String? locale,
     String? userAgent,
+    Dio? dio,
     VoidCallback? dataChangedHandler,
   }) {
     if (dataPath != null) {
@@ -27,6 +29,9 @@ class _Config {
     }
     if (userAgent != null) {
       _Config.userAgent = userAgent;
+    }
+    if (dio != null) {
+      _Config.dio = dio;
     }
     if (dataChangedHandler != null) {
       _Config.dataChangedHandler = dataChangedHandler;

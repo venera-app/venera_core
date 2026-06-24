@@ -142,44 +142,46 @@ class JsEngine with _JSEngineApi {
   }
 
   Future<Map<String, dynamic>> _http(Map<String, dynamic> req) async {
-    HttpClientResponse? response;
+    Response<List<int>>? response;
     Object? error;
     dynamic body;
     final headers = <String, String>{};
-    final client = HttpClient();
 
     try {
-      final url = Uri.parse(req['url']);
+      final url = req['url'].toString();
       final method = (req['http_method'] ?? 'GET').toString().toUpperCase();
-      final request = await client.openUrl(method, url);
       final requestHeaders = Map<String, dynamic>.from(req['headers'] ?? {});
       final hasUserAgent = requestHeaders.keys.any(
         (key) => key.toString().toLowerCase() == 'user-agent',
       );
       if (!hasUserAgent) {
-        request.headers.set(HttpHeaders.userAgentHeader, _Config.userAgent);
-      }
-      for (final entry in requestHeaders.entries) {
-        request.headers.set(entry.key, entry.value);
+        requestHeaders[HttpHeaders.userAgentHeader] = _Config.userAgent;
       }
       final data = req['data'];
-      if (data is String) {
-        request.write(data);
-      } else if (data != null) {
-        request.add(_bytes(data));
-      }
-      response = await request.close();
+      final requestData = data == null || data is String ? data : _bytes(data);
+      final extra = req['extra'] is Map
+          ? Map<String, dynamic>.from(req['extra'])
+          : null;
+      response = await _Config.dio.request<List<int>>(
+        url,
+        data: requestData,
+        options: Options(
+          method: method,
+          headers: requestHeaders,
+          extra: extra,
+          responseType: ResponseType.bytes,
+          validateStatus: (_) => true,
+        ),
+      );
       response.headers.forEach((name, values) {
         headers[name] = values.join(',');
       });
-      final bytes = await _readHttpClientResponseBytes(response);
+      final bytes = Uint8List.fromList(response.data ?? const <int>[]);
       body = req['bytes'] == true
           ? bytes
           : utf8.decode(bytes, allowMalformed: true);
     } catch (e) {
       error = e;
-    } finally {
-      client.close(force: true);
     }
 
     return {
@@ -466,18 +468,6 @@ mixin class _JSEngineApi {
     }
     return (min + (max - min) * math.Random().nextDouble()).toInt();
   }
-}
-
-Future<Uint8List> _readHttpClientResponseBytes(HttpClientResponse response) {
-  final completer = Completer<Uint8List>();
-  final builder = BytesBuilder(copy: false);
-  response.listen(
-    builder.add,
-    onError: completer.completeError,
-    onDone: () => completer.complete(builder.takeBytes()),
-    cancelOnError: true,
-  );
-  return completer.future;
 }
 
 Uint8List _blockCipher(
