@@ -52,7 +52,7 @@ class JsEngine with _JSEngineApi {
   Future<void> ensureInit() => init();
 
   Future<void> _init() async {
-    _engine = FlutterQjs();
+    _engine = FlutterQjs(hostPromiseRejectionHandler: (_) {});
     unawaited(_engine!.dispatch());
 
     final setGlobalFunc = _engine!.evaluate(
@@ -252,7 +252,7 @@ class JsEngine with _JSEngineApi {
         requestHeaders[HttpHeaders.userAgentHeader] = _Config.userAgent;
       }
       final data = req['data'];
-      final requestData = data == null || data is String ? data : _bytes(data);
+      final requestData = data is List ? _bytes(data) : data;
       final extra = req['extra'] is Map
           ? Map<String, dynamic>.from(req['extra'])
           : null;
@@ -321,7 +321,6 @@ class JsEngine with _JSEngineApi {
 
 mixin class _JSEngineApi {
   final _documents = <int, DocumentWrapper>{};
-  final _cookies = <String, List<Cookie>>{};
 
   Object? handleHtmlCallback(Map<String, dynamic> data) {
     switch (data['function']) {
@@ -384,21 +383,23 @@ mixin class _JSEngineApi {
 
   dynamic handleCookieCallback(Map<String, dynamic> data) {
     final url = Uri.parse(data['url']);
-    final host = url.host;
+    final cookieJar = _Config.ensureCookieJar();
     switch (data['function']) {
       case 'set':
-        final list = _cookies.putIfAbsent(host, () => []);
-        for (final item in data['cookies'] as List) {
-          final map = Map<String, dynamic>.from(item);
-          list.removeWhere((cookie) => cookie.name == map['name']);
-          final cookie = Cookie(map['name'], map['value']);
-          if (map['domain'] != null) cookie.domain = map['domain'];
-          if (map['path'] != null) cookie.path = map['path'];
-          list.add(cookie);
-        }
+        cookieJar.saveFromResponse(
+          url,
+          (data['cookies'] as List).map((e) {
+            final map = Map<String, dynamic>.from(e);
+            final cookie = Cookie(map['name'], map['value']);
+            if (map['domain'] != null) cookie.domain = map['domain'];
+            if (map['path'] != null) cookie.path = map['path'];
+            return cookie;
+          }).toList(),
+        );
         return null;
       case 'get':
-        return (_cookies[host] ?? const <Cookie>[])
+        return cookieJar
+            .loadForRequest(url)
             .map(
               (cookie) => {
                 'name': cookie.name,
@@ -414,7 +415,7 @@ mixin class _JSEngineApi {
             )
             .toList();
       case 'delete':
-        _cookies.remove(host);
+        cookieJar.deleteUri(url);
         return null;
     }
   }
@@ -582,7 +583,9 @@ Uint8List _blockCipher(
 Uint8List _bytes(dynamic value) {
   if (value is Uint8List) return value;
   if (value is List<int>) return Uint8List.fromList(value);
-  if (value is List) return Uint8List.fromList(value.cast<int>());
+  if (value is List && value.every((e) => e is int)) {
+    return Uint8List.fromList(value.cast<int>());
+  }
   if (value is String) return Uint8List.fromList(utf8.encode(value));
   throw ArgumentError('Expected bytes or string, got ${value.runtimeType}');
 }

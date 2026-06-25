@@ -19,6 +19,8 @@ class AccountConfig {
 
   final Future<bool> Function(List<String>)? validateCookies;
 
+  final Future<Res<bool>> Function(List<String>)? loginWithCookies;
+
   const AccountConfig(
     this.login,
     this.loginWebsite,
@@ -28,6 +30,7 @@ class AccountConfig {
     this.onLoginWithWebviewSuccess,
     this.cookieFields,
     this.validateCookies,
+    this.loginWithCookies,
   ) : infoItems = const [];
 }
 

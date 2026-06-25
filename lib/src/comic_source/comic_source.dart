@@ -64,6 +64,8 @@ class ComicSourceManager with ChangeNotifier {
   ComicSource? fromIntKey(int key) =>
       _sources.firstWhereOrNull((element) => element.key.hashCode == key);
 
+  String get sourceDirectory => FilePath.join(_Config.dataPath, "comic_source");
+
   Future<void> init({
     String? dataPath,
     String? appVersion,
@@ -82,8 +84,9 @@ class ComicSourceManager with ChangeNotifier {
       dataChangedHandler: dataChangedHandler,
       uiHandler: uiHandler,
     );
+    _Config.ensureCookieJar();
     await JsEngine().init();
-    final path = FilePath.join(_Config.dataPath, "comic_source");
+    final path = sourceDirectory;
     if (!(await Directory(path).exists())) {
       Directory(path).create();
       return;
@@ -103,11 +106,156 @@ class ComicSourceManager with ChangeNotifier {
     }
   }
 
-  Future reload() async {
+  Future reload({
+    String? dataPath,
+    String? appVersion,
+    String? locale,
+    String? userAgent,
+    Dio? dio,
+    VoidCallback? dataChangedHandler,
+    ComicSourceUiHandler? uiHandler,
+  }) async {
     _sources.clear();
     JsEngine().runCode("ComicSource.sources = {};");
-    await init();
+    await init(
+      dataPath: dataPath,
+      appVersion: appVersion,
+      locale: locale,
+      userAgent: userAgent,
+      dio: dio,
+      dataChangedHandler: dataChangedHandler,
+      uiHandler: uiHandler,
+    );
     notifyListeners();
+  }
+
+  void dispose() {
+    _sources.clear();
+    _availableUpdates.clear();
+    JsEngine.reset();
+    _Config.disposeCookieJar();
+    notifyListeners();
+  }
+
+  Future<ComicSource> installFromText(
+    String js, {
+    bool replace = false,
+    String? fileName,
+  }) async {
+    final metadata = ComicSourceParser().parseMetadata(js);
+    final existing = find(metadata.key);
+    if (existing != null && !replace) {
+      throw ComicSourceParseException("key(${metadata.key}) already exists");
+    }
+    if (existing != null) {
+      await _deleteSourceFiles(existing);
+      remove(existing.key);
+    }
+    final source = await ComicSourceParser().createAndParse(
+      js,
+      fileName ?? "${metadata.key}.js",
+    );
+    add(source);
+    return source;
+  }
+
+  Future<ComicSource> installFromFile(
+    String path, {
+    bool replace = false,
+  }) async {
+    final file = File(path);
+    if (!await file.exists()) {
+      throw FileSystemException("Source file does not exist", path);
+    }
+    return installFromText(
+      await file.readAsString(),
+      replace: replace,
+      fileName: file.uri.pathSegments.last,
+    );
+  }
+
+  Future<ComicSource> installFromUrl(String url, {bool replace = false}) async {
+    final response = await _Config.dio.get<String>(url);
+    final js = response.data;
+    if (js == null || js.trim().isEmpty) {
+      throw ComicSourceParseException("Downloaded source is empty");
+    }
+    final name = Uri.tryParse(url)?.pathSegments.last;
+    return installFromText(
+      js,
+      replace: replace,
+      fileName: name == null || name.isEmpty ? null : name,
+    );
+  }
+
+  Future<Map<String, String>> checkUpdates([String? key]) async {
+    final updates = <String, String>{};
+    final targets = key == null
+        ? all()
+        : [
+            find(key) ??
+                (throw ComicSourceParseException("source $key not found")),
+          ];
+    for (final source in targets) {
+      if (source.url.isEmpty) continue;
+      final response = await _Config.dio.get<String>(source.url);
+      final js = response.data;
+      if (js == null || js.trim().isEmpty) continue;
+      final metadata = ComicSourceParser().parseMetadata(js);
+      if (metadata.key != source.key) {
+        throw ComicSourceParseException(
+          "source ${source.key} update key mismatch: ${metadata.key}",
+        );
+      }
+      if (compareSemVer(metadata.version, source.version)) {
+        updates[source.key] = metadata.version;
+      }
+    }
+    updateAvailableUpdates(updates);
+    return updates;
+  }
+
+  Future<ComicSource> updateSource(String key) async {
+    final source = find(key);
+    if (source == null) {
+      throw ComicSourceParseException("source $key not found");
+    }
+    if (source.url.isEmpty) {
+      throw ComicSourceParseException("source $key has no update url");
+    }
+    return installFromUrl(source.url, replace: true);
+  }
+
+  Future<List<ComicSource>> updateAllSources() async {
+    final updated = <ComicSource>[];
+    for (final source in all()) {
+      if (source.url.isEmpty) continue;
+      final updates = await checkUpdates(source.key);
+      if (updates.containsKey(source.key)) {
+        updated.add(await updateSource(source.key));
+      }
+    }
+    return updated;
+  }
+
+  Future<void> deleteSource(String key) async {
+    final source = find(key);
+    if (source == null) {
+      throw ComicSourceParseException("source $key not found");
+    }
+    await _deleteSourceFiles(source);
+    remove(key);
+  }
+
+  Future<void> _deleteSourceFiles(ComicSource source) async {
+    final file = File(source.filePath);
+    if (await file.exists()) {
+      await file.delete();
+    }
+    final dataFile = File(FilePath.join(sourceDirectory, "${source.key}.data"));
+    if (await dataFile.exists()) {
+      await dataFile.delete();
+    }
   }
 
   void add(ComicSource source) {
@@ -117,6 +265,7 @@ class ComicSourceManager with ChangeNotifier {
 
   void remove(String key) {
     _sources.removeWhere((element) => element.key == key);
+    JsEngine().runCode("delete ComicSource.sources[${jsonEncode(key)}];");
     notifyListeners();
   }
 
@@ -135,6 +284,22 @@ class ComicSourceManager with ChangeNotifier {
   void notifyStateChange() {
     notifyListeners();
   }
+}
+
+class ComicSourceMetadata {
+  final String name;
+  final String key;
+  final String version;
+  final String url;
+  final String? minAppVersion;
+
+  const ComicSourceMetadata(
+    this.name,
+    this.key,
+    this.version,
+    this.url,
+    this.minAppVersion,
+  );
 }
 
 class ComicSource {

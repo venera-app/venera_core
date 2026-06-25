@@ -8,6 +8,7 @@ class _Config {
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
       '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
   static Dio dio = Dio();
+  static CookieJarSql? cookieJar;
   static VoidCallback? dataChangedHandler;
   static ComicSourceUiHandler? uiHandler;
 
@@ -41,5 +42,22 @@ class _Config {
     if (uiHandler != null) {
       _Config.uiHandler = uiHandler;
     }
+  }
+
+  static CookieJarSql ensureCookieJar() {
+    if (dataPath.isEmpty) {
+      throw StateError('dataPath must be set before initializing cookies');
+    }
+    final jar = cookieJar ??= SingleInstanceCookieJar.createInstance(dataPath);
+    if (!dio.interceptors.any((e) => e is CookieManagerSql)) {
+      dio.interceptors.add(CookieManagerSql(jar));
+    }
+    return jar;
+  }
+
+  static void disposeCookieJar() {
+    dio.interceptors.removeWhere((e) => e is CookieManagerSql);
+    cookieJar = null;
+    SingleInstanceCookieJar.disposeInstance();
   }
 }

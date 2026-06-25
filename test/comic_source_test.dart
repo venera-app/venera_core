@@ -19,6 +19,7 @@ void main() {
   });
 
   tearDownAll(() async {
+    SingleInstanceCookieJar.disposeInstance();
     if (await tempDir.exists()) {
       await tempDir.delete(recursive: true);
     }
@@ -480,6 +481,98 @@ void main() {
   });
 
   group('ComicSource', () {
+    test('injects cookie jar into dio and persists cookies', () async {
+      final dio = Dio();
+      final manager = ComicSourceManager();
+      await manager.init(dataPath: tempDir.path, dio: dio, appVersion: '2.0.0');
+
+      expect(dio.interceptors.whereType<CookieManagerSql>(), hasLength(1));
+
+      final jar = SingleInstanceCookieJar.instance!;
+      jar.saveFromResponse(Uri.parse('https://example.test/a'), [
+        Cookie('sid', 'abc')
+          ..domain = 'example.test'
+          ..path = '/',
+      ]);
+      expect(
+        jar.loadForRequestCookieHeader(Uri.parse('https://example.test/a')),
+        'sid=abc',
+      );
+    });
+
+    test(
+      'installs, replaces and deletes source files through manager',
+      () async {
+        final manager = ComicSourceManager();
+        final source = await manager.installFromText(
+          _sourceScript(
+            key: 'managed_source',
+            version: '1.0.0',
+            body: '''
+            comic = {
+              loadInfo: () => ({
+                title: 'Managed',
+                cover: 'cover',
+                tags: {},
+              }),
+              loadEp: () => ({ images: [] }),
+            }
+          ''',
+          ),
+        );
+
+        expect(source.version, '1.0.0');
+        expect(ComicSource.find('managed_source'), isNotNull);
+        expect(await File(source.filePath).exists(), isTrue);
+
+        await expectLater(
+          manager.installFromText(
+            _sourceScript(
+              key: 'managed_source',
+              version: '1.0.1',
+              body: '''
+              comic = {
+                loadInfo: () => ({
+                  title: 'Duplicate',
+                  cover: 'cover',
+                  tags: {},
+                }),
+                loadEp: () => ({ images: [] }),
+              }
+            ''',
+            ),
+          ),
+          throwsA(isA<ComicSourceParseException>()),
+        );
+
+        final replaced = await manager.installFromText(
+          _sourceScript(
+            key: 'managed_source',
+            version: '1.0.1',
+            body: '''
+            comic = {
+              loadInfo: () => ({
+                title: 'Replaced',
+                cover: 'cover',
+                tags: {},
+              }),
+              loadEp: () => ({ images: [] }),
+            }
+          ''',
+          ),
+          replace: true,
+        );
+
+        expect(replaced.version, '1.0.1');
+        expect(ComicSource.find('managed_source')!.version, '1.0.1');
+
+        await manager.deleteSource('managed_source');
+
+        expect(ComicSource.find('managed_source'), isNull);
+        expect(await File(replaced.filePath).exists(), isFalse);
+      },
+    );
+
     test('persists and reloads per-source data', () async {
       final source = await ComicSourceParser().parse(
         _sourceScript(

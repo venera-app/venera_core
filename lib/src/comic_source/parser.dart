@@ -56,6 +56,65 @@ class ComicSourceParser {
 
   String? _name;
 
+  ComicSourceMetadata parseMetadata(String js) {
+    js = js.replaceAll("\r\n", "\n");
+    var line1 = js
+        .split('\n')
+        .firstWhereOrNull((e) => e.trim().startsWith("class "));
+    if (line1 == null ||
+        !line1.startsWith("class ") ||
+        !line1.contains("extends ComicSource")) {
+      throw ComicSourceParseException("Invalid Content");
+    }
+    var className = line1.split("class")[1].split("extends ComicSource").first;
+    className = className.trim();
+    JsEngine().runCode("""(() => { $js
+        this['temp_metadata'] = new $className()
+      }).call()
+    """, className);
+    final metadata = JsEngine().runCode("""
+      (() => {
+        const source = this['temp_metadata'];
+        const metadata = {
+          name: source.name,
+          key: source.key,
+          version: source.version,
+          minAppVersion: source.minAppVersion,
+          url: source.url,
+        };
+        delete this['temp_metadata'];
+        return metadata;
+      })()
+    """);
+    final name =
+        metadata["name"] ??
+        (throw ComicSourceParseException('name is required'));
+    final key =
+        metadata["key"] ?? (throw ComicSourceParseException('key is required'));
+    final version =
+        metadata["version"] ??
+        (throw ComicSourceParseException('version is required'));
+    final minAppVersion = metadata["minAppVersion"];
+    final url = metadata["url"];
+    if (minAppVersion != null) {
+      if (compareSemVer(minAppVersion, _Config.appVersion.split('-').first)) {
+        throw ComicSourceParseException(
+          "minAppVersion $minAppVersion is required",
+        );
+      }
+    }
+    if (!key.toString().contains(RegExp(r"^[a-zA-Z0-9_]+$"))) {
+      throw ComicSourceParseException("key $key is invalid");
+    }
+    return ComicSourceMetadata(
+      name.toString(),
+      key.toString(),
+      version.toString(),
+      url?.toString() ?? "",
+      minAppVersion?.toString(),
+    );
+  }
+
   Future<ComicSource> createAndParse(String js, String fileName) async {
     if (!fileName.endsWith("js")) {
       fileName = "$fileName.js";
@@ -84,39 +143,19 @@ class ComicSourceParser {
   }
 
   Future<ComicSource> parse(String js, String filePath) async {
+    final metadata = parseMetadata(js);
     js = js.replaceAll("\r\n", "\n");
-    var line1 = js
-        .split('\n')
-        .firstWhereOrNull((e) => e.trim().startsWith("class "));
-    if (line1 == null ||
-        !line1.startsWith("class ") ||
-        !line1.contains("extends ComicSource")) {
-      throw ComicSourceParseException("Invalid Content");
-    }
+    var line1 = js.split('\n').firstWhere((e) => e.trim().startsWith("class "));
     var className = line1.split("class")[1].split("extends ComicSource").first;
     className = className.trim();
     JsEngine().runCode("""(() => { $js
         this['temp'] = new $className()
       }).call()
     """, className);
-    _name =
-        JsEngine().runCode("this['temp'].name") ??
-        (throw ComicSourceParseException('name is required'));
-    var key =
-        JsEngine().runCode("this['temp'].key") ??
-        (throw ComicSourceParseException('key is required'));
-    var version =
-        JsEngine().runCode("this['temp'].version") ??
-        (throw ComicSourceParseException('version is required'));
-    var minAppVersion = JsEngine().runCode("this['temp'].minAppVersion");
-    var url = JsEngine().runCode("this['temp'].url");
-    if (minAppVersion != null) {
-      if (compareSemVer(minAppVersion, _Config.appVersion.split('-').first)) {
-        throw ComicSourceParseException(
-          "minAppVersion $minAppVersion is required",
-        );
-      }
-    }
+    _name = metadata.name;
+    final key = metadata.key;
+    final version = metadata.version;
+    final url = metadata.url;
     for (var source in ComicSource.all()) {
       if (source.key == key) {
         throw ComicSourceParseException("key($key) already exists");
@@ -126,7 +165,10 @@ class ComicSourceParser {
     _checkKeyValidation();
 
     JsEngine().runCode("""
-      ComicSource.sources.$_key = this['temp'];
+      (() => {
+        ComicSource.sources[${jsonEncode(_key)}] = this['temp'];
+        delete this['temp'];
+      })()
     """);
 
     var source = ComicSource(
@@ -145,8 +187,8 @@ class ComicSourceParser {
       _parseImageLoadingConfigFunc(),
       _parseThumbnailLoadingConfigFunc(),
       filePath,
-      url ?? "",
-      version ?? "1.0.0",
+      url,
+      version,
       _parseCommentsLoader(),
       _parseSendCommentFunc(),
       _parseChapterCommentsLoader(),
@@ -168,9 +210,7 @@ class ComicSourceParser {
     await source.loadData();
 
     if (_checkExists("init")) {
-      Future.delayed(const Duration(milliseconds: 50), () {
-        JsEngine().runCode("ComicSource.sources.$_key.init()");
-      });
+      await JsEngine().runCode("ComicSource.sources.$_key.init()");
     }
 
     return source;
@@ -207,10 +247,10 @@ class ComicSourceParser {
           await JsEngine().runCode("""
           ComicSource.sources.$_key.account.login(${jsonEncode(account)},
           ${jsonEncode(pwd)})
-        """);
+          """);
           var source = ComicSource.find(_key!)!;
           source.data["account"] = <String>[account, pwd];
-          source.saveData();
+          await source.saveData();
           return const Res(true);
         } catch (e, s) {
           Log.error("Network", "$e\n$s");
@@ -220,7 +260,9 @@ class ComicSourceParser {
     }
 
     void logout() {
-      JsEngine().runCode("ComicSource.sources.$_key.account.logout()");
+      if (_checkExists("account.logout")) {
+        JsEngine().runCode("ComicSource.sources.$_key.account.logout()");
+      }
     }
 
     bool Function(String url, String title)? checkLoginStatus;
@@ -245,6 +287,7 @@ class ComicSourceParser {
     }
 
     Future<bool> Function(List<String>)? validateCookies;
+    Future<Res<bool>> Function(List<String>)? loginWithCookies;
 
     if (_checkExists('account.loginWithCookies?.validate')) {
       validateCookies = (cookies) async {
@@ -258,6 +301,17 @@ class ComicSourceParser {
           return false;
         }
       };
+      loginWithCookies = (cookies) async {
+        final valid = await validateCookies!(cookies);
+        if (!valid) {
+          return const Res.error("Invalid cookies");
+        }
+        var source = ComicSource.find(_key!)!;
+        source.data["account"] = "ok";
+        source.data["cookies"] = cookies;
+        await source.saveData();
+        return const Res(true);
+      };
     }
 
     return AccountConfig(
@@ -269,6 +323,7 @@ class ComicSourceParser {
       onLoginSuccess,
       ListOrNull.from(_getValue("account.loginWithCookies?.fields")),
       validateCookies,
+      loginWithCookies,
     );
   }
 
