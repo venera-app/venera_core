@@ -316,6 +316,51 @@ void main() {
       expect(target.attributes, {'text': 'artist:alice'});
     });
 
+    test('supports loadSetting in init when settings is a getter', () async {
+      final source = await ComicSourceParser().parse(
+        _sourceScript(
+          key: 'dynamic_settings_source',
+          body: '''
+            initFlag = false
+
+            get settings() {
+              return {
+                refreshDomainsOnStart: {
+                  type: 'switch',
+                  default: true,
+                },
+              }
+            }
+
+            async init() {
+              this.initFlag = this.loadSetting('refreshDomainsOnStart')
+            }
+
+            comic = {
+              loadInfo: () => ({
+                title: 'x',
+                cover: 'cover',
+                tags: {},
+              }),
+              loadEp: () => ({ images: [] }),
+            }
+          ''',
+        ),
+        'dynamic_settings_source.js',
+      );
+
+      expect(
+        source.settings?['refreshDomainsOnStart']?['default'],
+        isTrue,
+      );
+      expect(
+        JsEngine().runCode(
+          'ComicSource.sources.dynamic_settings_source.initFlag',
+        ),
+        isTrue,
+      );
+    });
+
     test('maps JS search and comic callbacks into Dart models', () async {
       final source = await ComicSourceParser().parse(
         _sourceScript(

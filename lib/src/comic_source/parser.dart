@@ -207,13 +207,18 @@ class ComicSourceParser {
       _parseArchiveDownloader(),
     );
 
-    await source.loadData();
+    JsEngine().registerTemporarySource(source);
+    try {
+      await source.loadData();
 
-    if (_checkExists("init")) {
-      await JsEngine().runCode("ComicSource.sources.$_key.init()");
+      if (_checkExists("init")) {
+        await JsEngine().runCode("ComicSource.sources.$_key.init()");
+      }
+
+      return source;
+    } finally {
+      JsEngine().unregisterTemporarySource(source.key);
     }
-
-    return source;
   }
 
   void _checkKeyValidation() {

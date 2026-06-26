@@ -26,6 +26,7 @@ class JsEngine with _JSEngineApi {
 
   FlutterQjs? _engine;
   Future<void>? _initializing;
+  final _temporarySources = <String, ComicSource>{};
 
   static void reset() {
     _cache?.dispose();
@@ -73,6 +74,17 @@ class JsEngine with _JSEngineApi {
     return engine.evaluate(js, name: name);
   }
 
+  ComicSource? findSource(String key) =>
+      ComicSource.find(key) ?? _temporarySources[key];
+
+  void registerTemporarySource(ComicSource source) {
+    _temporarySources[source.key] = source;
+  }
+
+  void unregisterTemporarySource(String key) {
+    _temporarySources.remove(key);
+  }
+
   Object? _messageReceiver(dynamic message) {
     if (message is! Map) return null;
     final map = Map<String, dynamic>.from(message);
@@ -81,10 +93,10 @@ class JsEngine with _JSEngineApi {
         Log.error(map['title']?.toString() ?? 'JavaScript', map['content']);
         return null;
       case 'load_data':
-        final source = ComicSource.find(map['key']);
+        final source = findSource(map['key']);
         return source?.data[map['data_key']];
       case 'save_data':
-        final source = ComicSource.find(map['key']);
+        final source = findSource(map['key']);
         if (source == null) return null;
         final dataKey = map['data_key'];
         if (dataKey == 'setting') {
@@ -94,18 +106,18 @@ class JsEngine with _JSEngineApi {
         unawaited(source.saveData());
         return null;
       case 'delete_data':
-        final source = ComicSource.find(map['key']);
+        final source = findSource(map['key']);
         source?.data.remove(map['data_key']);
         if (source != null) unawaited(source.saveData());
         return null;
       case 'load_setting':
-        final source = ComicSource.find(map['key']);
+        final source = findSource(map['key']);
         final settingKey = map['setting_key'];
         return source?.data['settings']?[settingKey] ??
             source?.settings?[settingKey]?['default'] ??
             (throw StateError('Setting not found: $settingKey'));
       case 'isLogged':
-        return ComicSource.find(map['key'])?.isLogged ?? false;
+        return findSource(map['key'])?.isLogged ?? false;
       case 'delay':
         return Future.delayed(Duration(milliseconds: map['time'] ?? 0));
       case 'http':
